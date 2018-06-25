@@ -1,4 +1,6 @@
 ﻿using CatsServer.Data;
+using CatsServer.Infrastructure;
+using CatsServer.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -18,11 +20,14 @@ namespace CatsServer
 
         public void Configure(IApplicationBuilder app, IHostingEnvironment env)
         {
-            if (env.IsDevelopment())
+
+            app.Use((context, next) =>
             {
-                app.UseDeveloperExceptionPage();
-                app.UseDatabaseErrorPage();
-            }
+                context.RequestServices.GetRequiredService<CatsDbContext>().Database.Migrate();
+                return next();
+            });
+
+            app.UseStaticFiles();
 
             app.Use((context, next) =>
             {
@@ -31,14 +36,14 @@ namespace CatsServer
                 return next();
             });
 
-            app.MapWhen(ctx => ctx.Request.Path.Value == string.Empty && ctx.Request.Method == "GET",
+            app.MapWhen(ctx => ctx.Request.Path.Value == "/" && ctx.Request.Method == HttpMethod.Get,
                 home =>
                 {
                     home.Run(async (context) =>
                     {
                         await context.Response.WriteAsync($"<h1>{env.ApplicationName}</h1>");
 
-                        var db = context.RequestServices.GetService<CatsDbContext>();
+                        var db = context.RequestServices.GetRequiredService<CatsDbContext>();
 
                         var catData = db.Cats.Select(c => new
                         {
@@ -58,6 +63,49 @@ namespace CatsServer
                             <form action=""/cat/add"">
                                 <input type=""submit"" value=""Add Cat"" />
                             <form>");
+                    });
+                });
+
+            app.MapWhen(req => req.Request.Path.Value == "/cat/add",
+                catAdd =>
+                {
+                    catAdd.Run(async (context) =>
+                    {
+                        if (context.Request.Method == HttpMethod.Get)
+                        {
+                            context.Response.Redirect("/cats-add-form.html");
+                        }
+                        else if (context.Request.Method == HttpMethod.Post)
+                        {
+                            var db = context.RequestServices.GetRequiredService<CatsDbContext>();
+
+                            var formData = context.Request.Form;
+
+                            var age = 0;
+                            int.TryParse(formData["Age"], out age);
+
+                            var cat = new Cat
+                            {
+                                Name = formData["Name"],
+                                Age = age,
+                                Breed = formData["Breed"],
+                                Image = formData["ImageUrl"]
+                            };
+
+                            db.Cats.Add(cat);
+
+                            try
+                            {
+                                await db.SaveChangesAsync();
+
+                                context.Response.Redirect("/");
+                            }
+                            catch
+                            {
+                                await context.Response.WriteAsync("<h2>Invalid cat data!</h2>");
+                                await context.Response.WriteAsync(@"<a href==""/cat/add"">Back to the Form</a>");
+                            }
+                        }
                     });
                 });
 
